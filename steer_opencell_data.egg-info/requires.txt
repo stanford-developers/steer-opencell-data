@@ -1,0 +1,4 @@
+steer-core==0.1.27
+steer-materials==0.1.16
+steer-opencell-design==0.4.9
+shapely==2.1.1

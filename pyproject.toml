@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "steer-opencell-design"
+name = "steer-opencell-data"
 dynamic = ["version"]
-description = "STEER OpenCell Design - A Python package for designing and modeling battery cells."
+description = "STEER OpenCell Data - Data feed for STEER OpenCell"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -19,16 +19,18 @@ classifiers = [
 dependencies = [
     "steer-core==0.1.27",
     "steer-materials==0.1.16",
+    "steer-opencell-design==0.4.9",
     "shapely==2.1.1",
 ]
 
 [project.urls]
-Homepage = "https://github.com/stanford-developers/steer-opencell-design/"
-Repository = "https://github.com/stanford-developers/steer-opencell-design/"
+Homepage = "https://github.com/stanford-developers/steer-opencell-data/"
+Repository = "https://github.com/stanford-developers/steer-opencell-data/"
 
 [tool.setuptools.dynamic]
-version = {attr = "steer_opencell_design.__version__"}
+version = {attr = "steer_opencell_data.__version__"}
 
 [tool.setuptools]
-packages = ["steer_opencell_design"]
+packages = ["steer_opencell_data"]
 
+    
