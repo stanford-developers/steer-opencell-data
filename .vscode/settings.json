@@ -1,0 +1,6 @@
+{
+    "python.analysis.extraPaths": [
+        "/Users/nsiemons/Drive/Code_projects/STEER/steer-core",
+        "/Users/nsiemons/Drive/Code_projects/STEER/steer-opencell-design"
+    ]
+}
