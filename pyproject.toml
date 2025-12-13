@@ -17,9 +17,9 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "steer-core==0.1.27",
-    "steer-materials==0.1.16",
-    "steer-opencell-design==0.4.9",
+    "steer-core==0.1.31",
+    "steer-materials==0.1.17",
+    "steer-opencell-design==0.4.12",
     "shapely==2.1.1",
 ]
 
@@ -32,5 +32,8 @@ version = {attr = "steer_opencell_data.__version__"}
 
 [tool.setuptools]
 packages = ["steer_opencell_data"]
+
+[tool.setuptools.package-data]
+steer_opencell_data = ["database.db"]
 
     
