@@ -1,0 +1,9 @@
+__pycache__/
+build/
+scripts/
+*.egg-info/
+*.DS_Store
+dist/
+data_scripts/
+Archive/
+.vscode/
