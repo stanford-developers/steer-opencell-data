@@ -1,0 +1,11 @@
+LICENCE.txt
+README.md
+pyproject.toml
+steer_opencell_data/DataManager.py
+steer_opencell_data/__init__.py
+steer_opencell_data/database.db
+steer_opencell_data.egg-info/PKG-INFO
+steer_opencell_data.egg-info/SOURCES.txt
+steer_opencell_data.egg-info/dependency_links.txt
+steer_opencell_data.egg-info/requires.txt
+steer_opencell_data.egg-info/top_level.txt
