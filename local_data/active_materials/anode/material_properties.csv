@@ -1,0 +1,9 @@
+old_name,reference,name,density,specific_cost
+pb_powder,Na/Na+,Lead,11340,2.50
+removed-vendor_hc,Na/Na+,Hard Carbon (Vendor A - 330 mAh/g),1500,7.00
+removed-vendor_hc_commercial,Na/Na+,Hard Carbon (Vendor B - 300 mAh/g),1500,7.00
+removed-vendor_removed-vendor_type_i,Na/Na+,Hard Carbon (Vendor C - 300 mAh/g),1500,7.00
+removed-vendor-shc300,Na/Na+,Hard Carbon (Vendor D1 - 300 mAh/g),1500,7.00
+removed-vendor-shc300-h1,Na/Na+,Hard Carbon (Vendor D2 - 300 mAh/g),1500,7.00
+synthetic_graphite,Li/Li+,Synthetic Graphite,2200,8.00
+tin_powder_dgme,Na/Na+,Tin,7310,20.00

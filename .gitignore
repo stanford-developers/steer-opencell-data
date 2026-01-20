@@ -5,6 +5,5 @@ scripts/
 *.DS_Store
 dist/
 data_scripts/
-local_data/
 Archive/
 .vscode/
