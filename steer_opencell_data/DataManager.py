@@ -1,6 +1,6 @@
 import sqlite3 as sql
 from pathlib import Path
-from typing import TypeVar
+from typing import TypeVar, Optional, Union
 import pandas as pd
 import importlib.resources
 
@@ -14,10 +14,18 @@ T = TypeVar('T', bound='SerializerMixin')
 class DataManager:
     
     def __init__(self):
+        # Get the database path and store it as a string
         with importlib.resources.path("steer_opencell_data", "database.db") as db_path:
-            self._db_path = db_path
-            self._connection = sql.connect(self._db_path)
-            self._cursor = self._connection.cursor()
+            self._db_path = str(db_path)
+        self._connection = sql.connect(self._db_path)
+        self._cursor = self._connection.cursor()
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
 
     def create_table(self, table_name: str, columns: dict):
         """
@@ -48,31 +56,45 @@ class DataManager:
         self._cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
         return [row[0] for row in self._cursor.fetchall()]
 
-    def insert_data(self, table_name: str, data: pd.DataFrame):
+    def insert_data(self, table_name: str, data: pd.DataFrame) -> None:
         """
-        Inserts data into the database only if it doesn’t already exist.
+        Inserts data into the database only if it doesn't already exist.
 
         :param table_name: Name of the table.
         :param data: DataFrame containing the data to insert.
         """
+        if data.empty:
+            return
+        
+        columns = list(data.columns)
+        placeholders = ", ".join(["?"] * len(columns))
+        conditions = " AND ".join([f"{col} = ?" for col in columns])
+        
+        # Use INSERT OR IGNORE for better performance if you have UNIQUE constraints
+        # Otherwise, check before inserting
+        insert_query = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})"
+        check_query = f"SELECT COUNT(*) FROM {table_name} WHERE {conditions}"
+        
+        rows_to_insert = []
         for _, row in data.iterrows():
-            conditions = " AND ".join([f"{col} = ?" for col in data.columns])
-            check_query = f"SELECT COUNT(*) FROM {table_name} WHERE {conditions}"
-
-            self._cursor.execute(check_query, tuple(row))
-            if self._cursor.fetchone()[0] == 0:  # If the row does not exist, insert it
-                insert_query = f"INSERT INTO {table_name} ({', '.join(data.columns)}) VALUES ({', '.join(['?'] * len(row))})"
-                self._cursor.execute(insert_query, tuple(row))
-
+            row_tuple = tuple(row)
+            self._cursor.execute(check_query, row_tuple)
+            if self._cursor.fetchone()[0] == 0:
+                rows_to_insert.append(row_tuple)
+        
+        # Batch insert
+        if rows_to_insert:
+            self._cursor.executemany(insert_query, rows_to_insert)
+        
         self._connection.commit()
 
     def get_data(
         self,
         table_name: str,
-        columns: list = None,
-        condition: str | list[str] = None,
-        latest_column: str = None,
-    ):
+        columns: Optional[list[str]] = None,
+        condition: Optional[Union[str, list[str]]] = None,
+        latest_column: Optional[str] = None,
+    ) -> pd.DataFrame:
         """
         Retrieve data from the database.
 
@@ -112,7 +134,7 @@ class DataManager:
 
         return pd.DataFrame(data, columns=columns)
 
-    def get_unique_values(self, table_name: str, column_name: str):
+    def get_unique_values(self, table_name: str, column_name: str) -> list:
         """
         Retrieves all unique values from a specified column.
 
@@ -123,6 +145,25 @@ class DataManager:
         query = f"SELECT DISTINCT {column_name} FROM {table_name}"
         self._cursor.execute(query)
         return [row[0] for row in self._cursor.fetchall()]
+    
+    def _get_materials(self, table_name: str, most_recent: bool = True) -> pd.DataFrame:
+        """
+        Generic method to retrieve materials from the database.
+
+        :param table_name: The name of the table.
+        :param most_recent: If True, returns only the most recent entry per name.
+        :return: DataFrame with materials.
+        """
+        if most_recent:
+            data = (
+                self.get_data(table_name=table_name)
+                .sort_values("date", ascending=False)
+                .drop_duplicates(subset="name", keep="first")
+                .reset_index(drop=True)
+            )
+        else:
+            data = self.get_data(table_name=table_name)
+        return data
 
     def get_current_collector_materials(self, most_recent: bool = True) -> pd.DataFrame:
         """
@@ -131,18 +172,7 @@ class DataManager:
         :param most_recent: If True, returns only the most recent entry.
         :return: DataFrame with current collector materials.
         """
-        data = (
-            self.get_data(table_name="current_collector_materials")
-            .groupby("name", group_keys=False)
-            .apply(
-                lambda x: x.sort_values("date", ascending=False).head(1)
-                if most_recent
-                else x
-            )
-            .reset_index(drop=True)
-        )
-
-        return data
+        return self._get_materials("current_collector_materials", most_recent)
 
     def get_insulation_materials(self, most_recent: bool = True) -> pd.DataFrame:
         """
@@ -151,18 +181,7 @@ class DataManager:
         :param most_recent: If True, returns only the most recent entry.
         :return: DataFrame with insulation materials.
         """
-        data = (
-            self.get_data(table_name="insulation_materials")
-            .groupby("name", group_keys=False)
-            .apply(
-                lambda x: x.sort_values("date", ascending=False).head(1)
-                if most_recent
-                else x
-            )
-            .reset_index(drop=True)
-        )
-
-        return data
+        return self._get_materials("insulation_materials", most_recent)
 
     def get_cathode_materials(self, most_recent: bool = True) -> pd.DataFrame:
         """
@@ -171,18 +190,7 @@ class DataManager:
         :param most_recent: If True, returns only the most recent entry.
         :return: DataFrame with cathode materials.
         """
-        data = (
-            self.get_data(table_name="cathode_materials")
-            .groupby("name", group_keys=False)
-            .apply(
-                lambda x: x.sort_values("date", ascending=False).head(1)
-                if most_recent
-                else x
-            )
-            .reset_index(drop=True)
-        )
-
-        return data
+        return self._get_materials("cathode_materials", most_recent)
 
     def get_anode_materials(self, most_recent: bool = True) -> pd.DataFrame:
         """
@@ -191,18 +199,7 @@ class DataManager:
         :param most_recent: If True, returns only the most recent entry.
         :return: DataFrame with anode materials.
         """
-        data = (
-            self.get_data(table_name="anode_materials")
-            .groupby("name", group_keys=False)
-            .apply(
-                lambda x: x.sort_values("date", ascending=False).head(1)
-                if most_recent
-                else x
-            )
-            .reset_index(drop=True)
-        )
-
-        return data
+        return self._get_materials("anode_materials", most_recent)
 
     def get_binder_materials(self, most_recent: bool = True) -> pd.DataFrame:
         """
@@ -211,18 +208,7 @@ class DataManager:
         :param most_recent: If True, returns only the most recent entry.
         :return: DataFrame with binder materials.
         """
-        data = (
-            self.get_data(table_name="binder_materials")
-            .groupby("name", group_keys=False)
-            .apply(
-                lambda x: x.sort_values("date", ascending=False).head(1)
-                if most_recent
-                else x
-            )
-            .reset_index(drop=True)
-        )
-
-        return data
+        return self._get_materials("binder_materials", most_recent)
 
     def get_conductive_additive_materials(
         self, most_recent: bool = True
@@ -233,18 +219,7 @@ class DataManager:
         :param most_recent: If True, returns only the most recent entry.
         :return: DataFrame with conductive additives.
         """
-        data = (
-            self.get_data(table_name="conductive_additive_materials")
-            .groupby("name", group_keys=False)
-            .apply(
-                lambda x: x.sort_values("date", ascending=False).head(1)
-                if most_recent
-                else x
-            )
-            .reset_index(drop=True)
-        )
-
-        return data
+        return self._get_materials("conductive_additive_materials", most_recent)
 
     def get_separator_materials(self, most_recent: bool = True) -> pd.DataFrame:
         """
@@ -253,18 +228,7 @@ class DataManager:
         :param most_recent: If True, returns only the most recent entry.
         :return: DataFrame with separator materials.
         """
-        data = (
-            self.get_data(table_name="separator_materials")
-            .groupby("name", group_keys=False)
-            .apply(
-                lambda x: x.sort_values("date", ascending=False).head(1)
-                if most_recent
-                else x
-            )
-            .reset_index(drop=True)
-        )
-
-        return data
+        return self._get_materials("separator_materials", most_recent)
     
     def get_tape_materials(self, most_recent: bool = True) -> pd.DataFrame:
         """
@@ -273,18 +237,7 @@ class DataManager:
         :param most_recent: If True, returns only the most recent entry.
         :return: DataFrame with tape materials.
         """
-        data = (
-            self.get_data(table_name="tape_materials")
-            .groupby("name", group_keys=False)
-            .apply(
-                lambda x: x.sort_values("date", ascending=False).head(1)
-                if most_recent
-                else x
-            )
-            .reset_index(drop=True)
-        )
-
-        return data
+        return self._get_materials("tape_materials", most_recent)
 
     def get_prismatic_container_materials(self, most_recent: bool = True) -> pd.DataFrame:
         """
@@ -293,21 +246,10 @@ class DataManager:
         :param most_recent: If True, returns only the most recent entry.
         :return: DataFrame with prismatic container materials.
         """
-        data = (
-            self.get_data(table_name="prismatic_container_materials")
-            .groupby("name", group_keys=False)
-            .apply(
-                lambda x: x.sort_values("date", ascending=False).head(1)
-                if most_recent
-                else x
-            )
-            .reset_index(drop=True)
-        )
-
-        return data
+        return self._get_materials("prismatic_container_materials", most_recent)
 
     @staticmethod
-    def read_half_cell_curve(half_cell_path) -> pd.DataFrame:
+    def read_half_cell_curve(half_cell_path: Union[str, Path]) -> pd.DataFrame:
         """
         Function to read in a half cell curve for this active material
 
@@ -316,8 +258,10 @@ class DataManager:
         """
         try:
             data = pd.read_csv(half_cell_path)
-        except:
+        except FileNotFoundError:
             raise FileNotFoundError(f"Could not find the file at {half_cell_path}")
+        except Exception as e:
+            raise ValueError(f"Error reading file at {half_cell_path}: {str(e)}")
 
         if "Specific Capacity (mAh/g)" not in data.columns:
             raise ValueError(
@@ -361,8 +305,14 @@ class DataManager:
         self._cursor.execute(f"DELETE FROM {table_name} WHERE {condition}")
         self._connection.commit()
 
-
+    def close(self) -> None:
+        """Explicitly close the database connection."""
+        if hasattr(self, '_connection') and self._connection:
+            self._connection.commit()
+            self._connection.close()
+    
     def __del__(self):
-        self._connection.close()
+        """Fallback cleanup - prefer using context manager or calling close() explicitly."""
+        self.close()
 
 
