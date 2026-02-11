@@ -17,7 +17,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "steer-core==0.1.41",
+    "steer-core==0.1.42",
 ]
 
 [project.urls]
