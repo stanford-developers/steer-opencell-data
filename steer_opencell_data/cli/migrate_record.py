@@ -8,6 +8,10 @@ Interactive usage:
 Non-interactive usage:
     python -m steer_opencell_data.cli.migrate_record --table cathode_materials --name LFP --yes
 
+Batch usage:
+    python -m steer_opencell_data.cli.migrate_record --table cathode_materials --name all --yes
+    python -m steer_opencell_data.cli.migrate_record --table all --section materials --yes
+
 Environment variables:
     DYNAMODB_TABLE  Target DynamoDB table (default: opencell-production)
     S3_BUCKET       Target S3 bucket (default: opencell-production-objects)
@@ -25,6 +29,7 @@ import os
 import sqlite3
 import sys
 import uuid
+from dataclasses import dataclass, field
 from typing import Any, Iterator
 
 try:
@@ -67,12 +72,25 @@ CELL_METADATA_COLUMNS = [
     "date_created", "version", "chemistry",
 ]
 
+_ALL_SENTINEL = "__ALL__"
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class MigrationResult:
+    """Result of migrating records from a table."""
+
+    table_name: str
+    total: int = 0
+    migrated: int = 0
+    errors: int = 0
+    error_details: list[tuple[str, str]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -272,26 +290,47 @@ def find_default_database() -> str:
 # Interactive prompts
 # ---------------------------------------------------------------------------
 
-def prompt_choice(prompt_text: str, options: list[str], label_fn=None) -> str:
-    """Display numbered options and return the selected value."""
+def prompt_choice(
+    prompt_text: str,
+    options: list[str],
+    label_fn=None,
+    allow_all: bool = False,
+    all_label: str = "All",
+) -> str:
+    """Display numbered options and return the selected value.
+
+    When *allow_all* is True, option ``0`` is prepended for selecting all items
+    and the sentinel ``_ALL_SENTINEL`` is returned if chosen.
+    """
     print(f"\n{prompt_text}")
+    if allow_all:
+        print(f"  0. {all_label}")
     for i, opt in enumerate(options, 1):
         label = label_fn(opt) if label_fn else opt
         print(f"  {i}. {label}")
 
+    min_val = 0 if allow_all else 1
     while True:
         try:
             raw = input("> ").strip()
-            idx = int(raw) - 1
-            if 0 <= idx < len(options):
-                return options[idx]
+            if allow_all and raw.lower() == "all":
+                return _ALL_SENTINEL
+            idx = int(raw)
+            if allow_all and idx == 0:
+                return _ALL_SENTINEL
+            if 1 <= idx <= len(options):
+                return options[idx - 1]
         except (ValueError, EOFError):
             pass
-        print(f"  Please enter a number between 1 and {len(options)}.")
+        print(f"  Please enter a number between {min_val} and {len(options)}.")
 
 
-def select_table_interactive(reader: SQLiteReader) -> str:
-    """Interactively select a table type, then a specific table."""
+def select_table_interactive(reader: SQLiteReader) -> str | list[str]:
+    """Interactively select a table type, then a specific table.
+
+    Returns a single table name, or a list of table names when the user
+    chooses "All tables" for the selected section.
+    """
     table_type = prompt_choice(
         "Select table type:",
         ["materials", "cells"],
@@ -302,17 +341,33 @@ def select_table_interactive(reader: SQLiteReader) -> str:
 
     tables = MATERIAL_TABLES if table_type == "materials" else CELL_TABLES
 
+    total_records = sum(reader.get_row_count(t) for t in tables)
+
     def table_label(t):
         count = reader.get_row_count(t)
         return f"{t} ({count} records)"
 
-    return prompt_choice("Select table:", tables, label_fn=table_label)
+    selected = prompt_choice(
+        "Select table:",
+        tables,
+        label_fn=table_label,
+        allow_all=True,
+        all_label=f"All {table_type} tables ({len(tables)} tables, {total_records} records)",
+    )
+
+    if selected == _ALL_SENTINEL:
+        return list(tables)
+    return selected
 
 
 def select_record_interactive(
     reader: SQLiteReader, table_name: str,
-) -> dict[str, Any]:
-    """Interactively select a record from a table."""
+) -> dict[str, Any] | list[dict[str, Any]]:
+    """Interactively select a record from a table.
+
+    Returns a single row dict, or a list of all row dicts when the user
+    chooses "All records".
+    """
     summaries = reader.get_records_summary(table_name)
     if not summaries:
         raise SystemExit(f"No records found in {table_name}.")
@@ -327,8 +382,15 @@ def select_record_interactive(
         return f"{name:<30s} (v{version}, {date})"
 
     selected_name = prompt_choice(
-        f"Records in {table_name}:", names, label_fn=record_label,
+        f"Records in {table_name}:",
+        names,
+        label_fn=record_label,
+        allow_all=True,
+        all_label=f"All records ({len(names)} records)",
     )
+
+    if selected_name == _ALL_SENTINEL:
+        return list(reader.iter_rows(table_name))
 
     row = reader.get_row_by_name(table_name, selected_name)
     if row is None:
@@ -374,6 +436,7 @@ def migrate_single_record(
     table_name: str,
     writer: AWSWriter,
     dry_run: bool = False,
+    quiet: bool = False,
 ) -> None:
     """Upload a single record to S3 + DynamoDB with cleanup on partial failure."""
     blob = extract_object_blob(row)
@@ -385,38 +448,130 @@ def migrate_single_record(
         )
         item = build_dynamodb_item(row, table_name, s3_key)
         logger.info(f"[DRY-RUN] Would write DynamoDB item: {item}")
-        print(f"\n[DRY-RUN] Would migrate {table_name}/{row['name']}")
+        if not quiet:
+            print(f"\n[DRY-RUN] Would migrate {table_name}/{row['name']}")
         return
 
     # Step 1: Upload to S3
-    print(f"\nUploading to S3... ", end="", flush=True)
+    if not quiet:
+        print(f"\nUploading to S3... ", end="", flush=True)
     writer.upload_object(s3_key, blob)
-    print("done")
+    if not quiet:
+        print("done")
 
     # Step 2: Write to DynamoDB (with S3 cleanup on failure)
-    print(f"Writing to DynamoDB... ", end="", flush=True)
+    if not quiet:
+        print(f"Writing to DynamoDB... ", end="", flush=True)
     try:
         item = build_dynamodb_item(row, table_name, s3_key)
         writer.put_item(item)
-        print("done")
+        if not quiet:
+            print("done")
     except Exception:
-        print("FAILED")
-        print("Cleaning up S3 object... ", end="", flush=True)
+        if not quiet:
+            print("FAILED")
+            print("Cleaning up S3 object... ", end="", flush=True)
         try:
             writer.delete_object(s3_key)
-            print("done")
+            if not quiet:
+                print("done")
         except Exception:
-            print(f"FAILED (orphaned object: s3://{s3_key})")
+            if not quiet:
+                print(f"FAILED (orphaned object: s3://{s3_key})")
         raise
 
-    # Determine verification endpoint
-    if table_name in set(MATERIAL_TABLES):
-        endpoint = f"GET /materials/{table_name}/{row['name']}"
-    else:
-        endpoint = f"GET /cells/{table_name}/{row['name']}"
+    if not quiet:
+        # Determine verification endpoint
+        if table_name in set(MATERIAL_TABLES):
+            endpoint = f"GET /materials/{table_name}/{row['name']}"
+        else:
+            endpoint = f"GET /cells/{table_name}/{row['name']}"
 
-    print(f"\nMigrated {table_name}/{row['name']}")
-    print(f"  Verify: {endpoint}")
+        print(f"\nMigrated {table_name}/{row['name']}")
+        print(f"  Verify: {endpoint}")
+
+
+def preview_batch(
+    rows_by_table: dict[str, list[dict[str, Any]]],
+) -> None:
+    """Print a summary preview of a batch migration."""
+    total_records = sum(len(rows) for rows in rows_by_table.values())
+
+    print(f"\nBatch Migration Preview")
+    print("=" * 40)
+    for tbl in sorted(rows_by_table):
+        print(f"  {tbl:<40s} {len(rows_by_table[tbl]):>3d} records")
+    print(f"  {'-' * 40}")
+    print(
+        f"  Total: {total_records} records across "
+        f"{len(rows_by_table)} table(s)"
+    )
+
+
+def migrate_batch(
+    rows_by_table: dict[str, list[dict[str, Any]]],
+    writer: AWSWriter,
+    dry_run: bool = False,
+) -> list[MigrationResult]:
+    """Migrate multiple records across one or more tables.
+
+    Continues on individual record failure and collects errors.
+    """
+    results: list[MigrationResult] = []
+    total_records = sum(len(rows) for rows in rows_by_table.values())
+    counter = 0
+
+    for table_name in sorted(rows_by_table):
+        rows = rows_by_table[table_name]
+        result = MigrationResult(table_name=table_name, total=len(rows))
+
+        print(f"\n{table_name} ({len(rows)} records)")
+        for row in rows:
+            counter += 1
+            name = row.get("name", "<unknown>")
+            print(
+                f"  [{counter}/{total_records}] {table_name}/{name} ... ",
+                end="",
+                flush=True,
+            )
+            try:
+                migrate_single_record(
+                    row, table_name, writer, dry_run=dry_run, quiet=True,
+                )
+                result.migrated += 1
+                print("done" if not dry_run else "dry-run ok")
+            except Exception as e:
+                result.errors += 1
+                result.error_details.append((name, str(e)))
+                print(f"FAILED: {e}")
+
+        results.append(result)
+
+    return results
+
+
+def print_batch_summary(results: list[MigrationResult]) -> None:
+    """Print a summary table after batch migration."""
+    total_migrated = sum(r.migrated for r in results)
+    total_errors = sum(r.errors for r in results)
+    total_records = sum(r.total for r in results)
+
+    print(f"\nMigration Summary")
+    print("=" * 60)
+    for r in results:
+        status = "OK" if r.errors == 0 else "ERRORS"
+        print(f"  {r.table_name:<40s} {r.migrated:>3d}/{r.total:>3d}  [{status}]")
+    print("-" * 60)
+    print(
+        f"  Total: {total_migrated} migrated, {total_errors} errors "
+        f"out of {total_records} records"
+    )
+
+    if total_errors > 0:
+        print(f"\n  Failed records:")
+        for r in results:
+            for name, err in r.error_details:
+                print(f"    - {r.table_name}/{name}: {err}")
 
 
 # ---------------------------------------------------------------------------
@@ -425,18 +580,28 @@ def migrate_single_record(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Migrate individual records from local SQLite to AWS",
+        description="Migrate records from local SQLite to AWS",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     parser.add_argument(
         "--table",
-        choices=sorted(ALL_TABLES),
-        help="Table name (skip interactive table selection)",
+        help=(
+            "Table name, or 'all' to migrate all tables in a section "
+            "(skip interactive table selection)"
+        ),
+    )
+    parser.add_argument(
+        "--section",
+        choices=["materials", "cells"],
+        help="Table section (required when --table all)",
     )
     parser.add_argument(
         "--name",
-        help="Record name (skip interactive record selection)",
+        help=(
+            "Record name, or 'all' to migrate every record in the table(s) "
+            "(skip interactive record selection)"
+        ),
     )
     parser.add_argument(
         "--yes", "-y",
@@ -465,6 +630,20 @@ def main() -> int:
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
+
+    # ------------------------------------------------------------------
+    # Validate CLI argument combinations
+    # ------------------------------------------------------------------
+    if args.table and args.table.lower() == "all":
+        if not args.section:
+            print("Error: --section (materials|cells) is required when --table all")
+            return 1
+        args.table = "all"
+    elif args.table and args.table not in ALL_TABLES:
+        print(f"Error: Unknown table '{args.table}'.")
+        print(f"  Valid tables: {', '.join(sorted(ALL_TABLES))}")
+        print(f"  Or use --table all --section materials|cells")
+        return 1
 
     print("\nOpenCell Record Migration")
     print("=" * 40)
@@ -508,47 +687,115 @@ def main() -> int:
             return 1
 
     with SQLiteReader(db_path) as reader:
-        # Validate requested table exists in SQLite
         db_tables = set(reader.get_table_names())
 
-        # Select table
-        if args.table:
+        # ------------------------------------------------------------------
+        # Resolve tables → rows_by_table: dict[str, list[dict]]
+        # ------------------------------------------------------------------
+        rows_by_table: dict[str, list[dict[str, Any]]] = {}
+
+        if args.table == "all":
+            # --table all --section materials|cells
+            tables = (
+                MATERIAL_TABLES if args.section == "materials" else CELL_TABLES
+            )
+            for t in tables:
+                if t not in db_tables:
+                    print(f"Warning: Table '{t}' not in database, skipping.")
+                    continue
+                rows_by_table[t] = list(reader.iter_rows(t))
+
+        elif args.table:
+            # Specific table via CLI
             if args.table not in db_tables:
                 print(f"Error: Table '{args.table}' not found in database.")
                 return 1
-            table_name = args.table
-        else:
-            table_name = select_table_interactive(reader)
 
-        # Select record
-        if args.name:
-            row = reader.get_row_by_name(table_name, args.name)
-            if row is None:
-                print(
-                    f"Error: Record '{args.name}' not found in {table_name}."
-                )
-                return 1
-        else:
-            row = select_record_interactive(reader, table_name)
+            if args.name and args.name.lower() == "all":
+                rows_by_table[args.table] = list(reader.iter_rows(args.table))
+            elif args.name:
+                row = reader.get_row_by_name(args.table, args.name)
+                if row is None:
+                    print(
+                        f"Error: Record '{args.name}' not found "
+                        f"in {args.table}."
+                    )
+                    return 1
+                rows_by_table[args.table] = [row]
+            else:
+                # Interactive record selection
+                selection = select_record_interactive(reader, args.table)
+                if isinstance(selection, list):
+                    rows_by_table[args.table] = selection
+                else:
+                    rows_by_table[args.table] = [selection]
 
+        else:
+            # Fully interactive: pick table (or all tables), then records
+            table_selection = select_table_interactive(reader)
+            if isinstance(table_selection, list):
+                # "All tables" chosen — migrate all records in each
+                for t in table_selection:
+                    rows_by_table[t] = list(reader.iter_rows(t))
+            else:
+                # Single table — pick record(s)
+                if args.name and args.name.lower() == "all":
+                    rows_by_table[table_selection] = list(
+                        reader.iter_rows(table_selection)
+                    )
+                elif args.name:
+                    row = reader.get_row_by_name(table_selection, args.name)
+                    if row is None:
+                        print(
+                            f"Error: Record '{args.name}' not found "
+                            f"in {table_selection}."
+                        )
+                        return 1
+                    rows_by_table[table_selection] = [row]
+                else:
+                    selection = select_record_interactive(
+                        reader, table_selection,
+                    )
+                    if isinstance(selection, list):
+                        rows_by_table[table_selection] = selection
+                    else:
+                        rows_by_table[table_selection] = [selection]
+
+        # ------------------------------------------------------------------
+        # Determine single vs batch mode
+        # ------------------------------------------------------------------
+        total_records = sum(len(rows) for rows in rows_by_table.values())
+        if total_records == 0:
+            print("No records to migrate.")
+            return 0
+
+        is_batch = total_records > 1
+
+        # ------------------------------------------------------------------
         # Preview
-        try:
-            blob = extract_object_blob(row)
-        except ValueError as e:
-            print(f"Error: {e}")
-            return 1
-
-        s3_key = generate_s3_key(table_name, row["name"])
-        exists = False
-        if not args.dry_run:
+        # ------------------------------------------------------------------
+        if is_batch:
+            preview_batch(rows_by_table)
+        else:
+            table_name = next(iter(rows_by_table))
+            row = rows_by_table[table_name][0]
             try:
-                exists = writer.item_exists(table_name, row["name"])
-            except Exception as e:
-                print(f"Warning: Could not check if record exists: {e}")
+                blob = extract_object_blob(row)
+            except ValueError as e:
+                print(f"Error: {e}")
+                return 1
+            s3_key = generate_s3_key(table_name, row["name"])
+            exists = False
+            if not args.dry_run:
+                try:
+                    exists = writer.item_exists(table_name, row["name"])
+                except Exception as e:
+                    print(f"Warning: Could not check if record exists: {e}")
+            preview_record(row, table_name, len(blob), s3_key, exists)
 
-        preview_record(row, table_name, len(blob), s3_key, exists)
-
+        # ------------------------------------------------------------------
         # Confirm
+        # ------------------------------------------------------------------
         if not args.yes:
             try:
                 answer = input("\nProceed? [y/N] ").strip().lower()
@@ -559,12 +806,26 @@ def main() -> int:
                 print("Aborted.")
                 return 0
 
+        # ------------------------------------------------------------------
         # Migrate
-        try:
-            migrate_single_record(row, table_name, writer, dry_run=args.dry_run)
-        except Exception as e:
-            print(f"\nError during migration: {e}")
-            return 1
+        # ------------------------------------------------------------------
+        if is_batch:
+            results = migrate_batch(
+                rows_by_table, writer, dry_run=args.dry_run,
+            )
+            print_batch_summary(results)
+            total_errors = sum(r.errors for r in results)
+            return 1 if total_errors > 0 else 0
+        else:
+            table_name = next(iter(rows_by_table))
+            row = rows_by_table[table_name][0]
+            try:
+                migrate_single_record(
+                    row, table_name, writer, dry_run=args.dry_run,
+                )
+            except Exception as e:
+                print(f"\nError during migration: {e}")
+                return 1
 
     return 0
 
