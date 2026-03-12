@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "STEER OpenCell Data - Data feed for STEER OpenCell"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = {text = "CC-BY-NC-SA-4.0"}
 authors = [
     {name = "Nicholas Siemons", email = "nsiemons@stanford.edu"}
 ]
@@ -17,8 +17,11 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "steer-core==0.1.33",
+    "steer-core==0.2.7",
 ]
+
+[project.optional-dependencies]
+cli = ["boto3>=1.35.0"]
 
 [project.urls]
 Homepage = "https://github.com/stanford-developers/steer-opencell-data/"
@@ -28,7 +31,7 @@ Repository = "https://github.com/stanford-developers/steer-opencell-data/"
 version = {attr = "steer_opencell_data.__version__"}
 
 [tool.setuptools]
-packages = ["steer_opencell_data"]
+packages = ["steer_opencell_data", "steer_opencell_data.cli"]
 
 [tool.setuptools.package-data]
 steer_opencell_data = ["database.db"]
