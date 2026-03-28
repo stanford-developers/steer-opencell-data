@@ -8,3 +8,4 @@ data_scripts/
 Archive/
 .vscode/
 refresh_database.sh
+output/
