@@ -132,8 +132,7 @@ my_jellyroll = ocd.WoundJellyRoll(
     laminate=my_layup,
     mandrel=mandrel,
     tape=tape,
-    additional_tape_wraps=4,
-    name="BYD 46120 LFP",
+    additional_tape_wraps=4
 )
 # %%
 # create encapsulation
@@ -142,24 +141,21 @@ my_cathode_terminal_connector = ocd.CylindricalTerminalConnector(
     material=ocd.PrismaticContainerMaterial.from_database('Steel'),
     thickness=2,
     radius=44/2,
-    fill_factor=0.4,
-    name = "Cylindrical Terminal Connector Cathode"
+    fill_factor=0.4
 )
 
 my_anode_terminal_connector = ocd.CylindricalTerminalConnector(
     material=ocd.PrismaticContainerMaterial.from_database('Steel'),
     thickness=2,
     radius=44/2,
-    fill_factor=0.4,
-    name = "Cylindrical Terminal Connector Anode"
+    fill_factor=0.4
 )
 
 my_lid = ocd.CylindricalLidAssembly(
         material= ocd.PrismaticContainerMaterial.from_database('Steel'),
         thickness= 5,
         radius= 45/2,
-        fill_factor= 0.2,
-        name = "Cylindrical Lid Assembly",
+        fill_factor= 0.2
 )
 
 my_canister = ocd.CylindricalCanister(
@@ -167,7 +163,6 @@ my_canister = ocd.CylindricalCanister(
     outer_radius= 46/2,
     height=120,
     wall_thickness= 0.2,
-    name= "Cylindrical Canister",
 )
 
 my_cylindtrical_encapsulation = ocd.CylindricalEncapsulation(
