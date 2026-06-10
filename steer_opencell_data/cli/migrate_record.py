@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2024-2026 Stanford University
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """
 Migrate individual records from local SQLite to AWS DynamoDB + S3.
 
@@ -13,8 +15,8 @@ Batch usage:
     python -m steer_opencell_data.cli.migrate_record --table all --section materials --yes
 
 Environment variables:
-    DYNAMODB_TABLE  Target DynamoDB table (default: example-dynamodb-table)
-    S3_BUCKET       Target S3 bucket (default: example-s3-bucket)
+    DYNAMODB_TABLE  Target DynamoDB table (required)
+    S3_BUCKET       Target S3 bucket (required)
     AWS_REGION      AWS region (default: us-east-2)
 
 Requires: pip install steer-opencell-data[cli]
@@ -663,9 +665,17 @@ def main() -> int:
 
     logger.debug(f"Using database: {db_path}")
 
-    # Build AWS config
-    dynamodb_table = os.environ.get("DYNAMODB_TABLE", "example-dynamodb-table")
-    s3_bucket = os.environ.get("S3_BUCKET", "example-s3-bucket")
+    # Build AWS config — targets must be set explicitly so a stray invocation
+    # can never write to an unintended deployment.
+    dynamodb_table = os.environ.get("DYNAMODB_TABLE")
+    s3_bucket = os.environ.get("S3_BUCKET")
+    if not dynamodb_table or not s3_bucket:
+        print(
+            "Error: DYNAMODB_TABLE and S3_BUCKET environment variables must be "
+            "set to the migration target (e.g. export DYNAMODB_TABLE=my-table "
+            "S3_BUCKET=my-bucket)."
+        )
+        return 1
     aws_region = os.environ.get("AWS_REGION", "us-east-2")
 
     writer = AWSWriter(dynamodb_table, s3_bucket, aws_region)

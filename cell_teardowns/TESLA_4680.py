@@ -1,4 +1,14 @@
 # %%
+# ============================================================================
+# TEARDOWN ATTRIBUTION
+# ----------------------------------------------------------------------------
+# Source / reference:  TODO (publication, teardown report, or measurement
+#                      campaign this model is based on)
+# Date of teardown:    TODO
+# Performed by:        TODO
+# Notes:               TODO (assumptions, estimated vs. measured values, etc.)
+# ============================================================================
+# %%
 from steer_opencell_data.script_utils import build_plot_exporter
 
 _plot_exporter = build_plot_exporter(__file__)

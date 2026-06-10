@@ -8,20 +8,30 @@ dynamic = ["version"]
 description = "STEER OpenCell Data - Data feed for STEER OpenCell"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "CC-BY-NC-SA-4.0"}
+license = {text = "AGPL-3.0-or-later"}
 authors = [
     {name = "Nicholas Siemons", email = "nsiemons@stanford.edu"}
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
 ]
 dependencies = [
-    "steer-core==0.2.15",
+    "steer-core==0.2.18",
 ]
 
 [project.optional-dependencies]
 cli = ["boto3>=1.35.0"]
+# Optional extra for the database (re)build scripts in default_materials/,
+# cell_teardowns/ and cell_references/. steer-opencell-design is not on this
+# list as a hard dependency to avoid a circular requirement: install it
+# separately when rebuilding the database.
+build = [
+    "pandas",
+    "steer-opencell-design",
+    "steer-materials",
+]
 
 [project.urls]
 Homepage = "https://github.com/stanford-developers/steer-opencell-data/"
