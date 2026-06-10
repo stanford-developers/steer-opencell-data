@@ -101,7 +101,7 @@ By participating, you are expected to uphold this code.
 
 steer-opencell-data is dual-licensed:
 
-- **AGPL-3.0-or-later** — for open-source use. See [LICENCE.txt](LICENCE.txt).
+- **AGPL-3.0-or-later** — for open-source use. See [LICENSE](LICENSE).
 - **Commercial license** — available for use without AGPL-3.0 copyleft requirements. Contact nsiemons@stanford.edu.
 
 By contributing, you agree to the terms of the [Contributor License Agreement](CLA.md),

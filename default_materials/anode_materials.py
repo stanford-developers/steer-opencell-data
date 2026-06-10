@@ -266,7 +266,7 @@ _plot_exporter.save(
 
 half_cell = (
     pd.read_csv(
-        '../local_data/active_materials/anode/lead.csv',
+        '../local_data/active_materials/anode/Lead.csv',
         names=['specific_capacity', 'voltage', 'direction', 'id'],
         skiprows=1
     ).drop(

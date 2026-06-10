@@ -132,4 +132,4 @@ steer-opencell-data is dual-licensed:
 - **Open source** — [GNU Affero General Public License v3.0 or later](https://www.gnu.org/licenses/agpl-3.0) (AGPL-3.0-or-later)
 - **Commercial** — A separate commercial license is available for use without AGPL-3.0 copyleft requirements. Contact [nsiemons@stanford.edu](mailto:nsiemons@stanford.edu) for details.
 
-See [LICENCE.txt](LICENCE.txt) for full terms.
+See [LICENSE](LICENSE) for full terms.
