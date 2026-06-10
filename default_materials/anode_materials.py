@@ -37,7 +37,7 @@ round_trip_efficiency = 0.95  # 95% efficiency
 # Create charge curve (0 to max capacity)
 charge_curve = (
     pd.read_csv(
-        '../local_data/active_materials/anode/Si removed-vendor (420 mAh g).csv',
+        '../local_data/active_materials/anode/Si (Vendor A - 420 mAh g).csv',
         names=['volts', 'soc'],
         skiprows=1
     ).assign(
@@ -92,7 +92,7 @@ round_trip_efficiency = 0.95  # 95% efficiency
 # Create charge curve (0 to max capacity)
 charge_curve = (
     pd.read_csv(
-        '../local_data/active_materials/anode/SiGr removed-vendor50E (440 mAh g).csv',
+        '../local_data/active_materials/anode/SiGr (Vendor A - 440 mAh g).csv',
         names=['volts', 'soc'],
         skiprows=1
     ).assign(

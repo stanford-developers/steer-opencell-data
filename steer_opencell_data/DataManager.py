@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2024-2026 Stanford University
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 import sqlite3 as sql
 from pathlib import Path
 from typing import TypeVar, Optional, Union
