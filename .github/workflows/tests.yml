@@ -1,0 +1,53 @@
+name: Smoke Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (with Git LFS)
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Verify database is a real LFS file, not a pointer
+        run: |
+          size=$(stat -c%s steer_opencell_data/database.db)
+          echo "database.db size: $size bytes"
+          if [ "$size" -lt 1000000 ]; then
+            echo "ERROR: database.db looks like an LFS pointer file, not the real database"
+            exit 1
+          fi
+
+      - name: Import package and list tables
+        run: |
+          python - <<'EOF'
+          from steer_opencell_data.DataManager import DataManager
+
+          db = DataManager()
+          tables = db.get_table_names()
+          print(f"Found {len(tables)} tables: {tables}")
+          assert len(tables) > 0, "Database contains no tables"
+
+          for table in ["cathode_materials", "anode_materials", "cell_references"]:
+              assert table in tables, f"Expected table '{table}' missing"
+              names = db.get_unique_values(table, "name")
+              print(f"{table}: {len(names)} records")
+              assert len(names) > 0, f"Table '{table}' is empty"
+          EOF

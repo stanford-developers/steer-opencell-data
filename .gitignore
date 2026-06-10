@@ -1,0 +1,14 @@
+__pycache__/
+build/
+scripts/
+*.egg-info/
+*.DS_Store
+dist/
+data_scripts/
+Archive/
+.vscode/
+refresh_database.sh
+refresh_local_database.sh
+sync_database_to_aws.sh
+output/
+.env
