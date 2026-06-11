@@ -2,10 +2,12 @@
 # ============================================================================
 # TEARDOWN ATTRIBUTION
 # ----------------------------------------------------------------------------
-# Source / reference:  TODO (publication, teardown report, or measurement
-#                      campaign this model is based on)
-# Date of teardown:    TODO
-# Performed by:        TODO
+# Source / reference:  Ank, M. et al. (2023), "Lithium-Ion Cells in Automotive
+#                      Applications: Tesla 4680 Cylindrical Cell Teardown and
+#                      Characterization", J. Electrochem. Soc. 170 120536.
+#                      https://iopscience.iop.org/article/10.1149/1945-7111/ad14d0
+# Date of teardown:    Published December 2023
+# Performed by:        Ank et al., Technical University of Munich
 # Notes:               TODO (assumptions, estimated vs. measured values, etc.)
 # ============================================================================
 # %%
