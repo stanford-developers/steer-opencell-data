@@ -2,10 +2,9 @@
 # ============================================================================
 # TEARDOWN ATTRIBUTION
 # ----------------------------------------------------------------------------
-# Source / reference:  TODO (publication, teardown report, or measurement
-#                      campaign this model is based on)
+# Source / reference:  In-house teardown (STEER)
 # Date of teardown:    TODO
-# Performed by:        TODO
+# Performed by:        Noah Streidel
 # Notes:               TODO (assumptions, estimated vs. measured values, etc.)
 # ============================================================================
 # %%
