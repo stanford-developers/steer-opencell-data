@@ -1,13 +1,13 @@
-old_name,reference,name,density,specific_cost
-removed-vendor_gen2_4.1v,Na/Na+,NaNiMn P2-O3 Composite - 4.1V,4400,11.00
-removed-vendor_gen2_4.25v,Na/Na+,NaNiMn P2-O3 Composite - 4.25V,4400,11.00
-removed-vendor_gen2_4.35v,Na/Na+,NaNiMn P2-O3 Composite - 4.35V,4400,11.00
-lfp,Li/Li+,LFP,3600,6.00
-m2c,Li/Li+,NMC811,4800,25.00
-nfpp,Na/Na+,NFPP,3300,15.00
-nmc622,Li/Li+,NMC622,4750,22.00
-nvp,Na/Na+,NVP,3200,20.00
-nvpf,Na/Na+,NVPF,3300,20.00
-prussian_white,Na/Na+,Prussian White,2000,15.00
-standard_potential_removed-vendor_001,Na/Na+,NFM111 (Vendor A),4400,11.00
-removed-vendor_xn33s,Na/Na+,NFM111 (Vendor B),4400,11.00
+reference,name,density,specific_cost
+Na/Na+,NaNiMn P2-O3 Composite - 4.1V,4400,11.00
+Na/Na+,NaNiMn P2-O3 Composite - 4.25V,4400,11.00
+Na/Na+,NaNiMn P2-O3 Composite - 4.35V,4400,11.00
+Li/Li+,LFP,3600,6.00
+Li/Li+,NMC811,4800,25.00
+Na/Na+,NFPP,3300,15.00
+Li/Li+,NMC622,4750,22.00
+Na/Na+,NVP,3200,20.00
+Na/Na+,NVPF,3300,20.00
+Na/Na+,Prussian White,2000,15.00
+Na/Na+,NFM111 (Vendor A),4400,11.00
+Na/Na+,NFM111 (Vendor B),4400,11.00
