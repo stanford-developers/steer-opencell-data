@@ -18,7 +18,9 @@ classifiers = [
     "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
 ]
 dependencies = [
-    "steer-core==0.2.20",
+    # Compatible-release range, not an exact pin, so a steer-core security patch
+    # is installable without rebuilding this (238 MB, Git-LFS) package.
+    "steer-core>=0.2.21,<0.3",
 ]
 
 [project.optional-dependencies]
