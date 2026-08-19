@@ -275,6 +275,12 @@ ea = cb['Electrode Assemblies']
 ea['Electrolyte'] = ea.pop('Separators')
 
 
+# % Top down view of the cell
+##########################
+# Plot top down view of the cell #
+##########################
+qse_5b.plot_top_down_view(opacity=0.4, width=800, height=600).show()
+
 ###########################
 # Print results and plots #
 ###########################

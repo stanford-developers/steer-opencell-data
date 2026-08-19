@@ -350,7 +350,8 @@ _plot_exporter.save(
     pw.plot_underlying_specific_capacity_curves(width=900, height=500),
     'plot_underlying_specific_capacity_curves',
 )
-# %%
+
+
 # %%
 materials = [
     lfp,
