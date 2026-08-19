@@ -59,8 +59,6 @@ my_cathode = ocd.Cathode(
     insulation_thickness=3
 )
 
-my_cathode.voltage_cutoff = 4.1
-
 # %%
 # Create the anode
 
@@ -184,7 +182,7 @@ cell = ocd.PouchCell(
     n_electrode_assembly=1,
     clipped_tab_length=10,
     name=cell_name,
-    # operating_voltage_window=(2.0, 4.1),
+    operating_voltage_window=(2.0, 4.1),
 )
 
 # looks better in safari
