@@ -350,6 +350,49 @@ _plot_exporter.save(
     pw.plot_underlying_specific_capacity_curves(width=900, height=500),
     'plot_underlying_specific_capacity_curves',
 )
+# %%
+# Li2S
+#
+# The measured curve is a sulfur half-cell, referenced to a Li-In alloy anode. The
+# cells this database backs are assembled discharged, so the cathode carrying the
+# lithium is Li2S, not elemental sulfur -- two adjustments follow from that:
+#   - voltage is shifted by the Li-In offset onto the Li/Li+ scale the material
+#     declares (`reference='Li/Li+'` is only valid once this shift is applied).
+#   - specific_capacity is rescaled by M(S)/M(Li2S), the same charge quoted against
+#     the heavier lithiated formula unit (1753.96 mAh/g S becomes 1223.77 mAh/g Li2S).
+# `specific_cost=0.0` matches the convention used for other materials whose cost is
+# supplied by the bill-of-materials flow rather than the material object itself.
+# The CSV's `direction` column spells the discharge branch `dischage`; the typo is in
+# the committed data and is left alone, mapped here on read instead.
+
+LI_IN_OFFSET_V = 0.62
+S_MOLAR_MASS_G_PER_MOL = 32.06
+LI2S_MOLAR_MASS_G_PER_MOL = 45.95
+LI2S_CAPACITY_SCALING = S_MOLAR_MASS_G_PER_MOL / LI2S_MOLAR_MASS_G_PER_MOL
+
+half_cell = (
+    pd.read_csv(
+        '../local_data/active_materials/cathode/sulfur.csv',
+    ).assign(
+        direction = lambda x: x['direction'].replace({'dischage': 'discharge'}),
+        voltage = lambda x: x['voltage'] + LI_IN_OFFSET_V,
+        specific_capacity = lambda x: x['specific_capacity'] * LI2S_CAPACITY_SCALING,
+    )
+)
+
+li2s = CathodeMaterial(
+    name = 'Li₂S',
+    reference = 'Li/Li+',
+    specific_cost = 0.0,
+    density = 1.66,
+    specific_capacity_curves = half_cell,
+    color='#E8C547'
+)
+
+_plot_exporter.save(
+    li2s.plot_underlying_specific_capacity_curves(width=900, height=500),
+    'plot_underlying_specific_capacity_curves',
+)
 
 
 # %%
@@ -364,7 +407,8 @@ materials = [
     nmc811,
     nvp,
     nvpf,
-    pw
+    pw,
+    li2s
 ]
 
 pickled_materials = [m.serialize() for m in materials]
