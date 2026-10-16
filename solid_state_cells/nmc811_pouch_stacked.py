@@ -8,11 +8,6 @@ import steer_opencell_design as ocd
 # %%
 # User Inputs
 
-####################
-
-table_name = 'cell_references' #### change this to cell_teardowns for teardowns
-cell_name = "NMC811 Stacked Pouch Cell"
-
 #####################
 # %%
 import os
@@ -26,6 +21,20 @@ insulation = ocd.InsulationMaterial.from_database("Aluminium Oxide, 95%")
 separator_material = ocd.SeparatorMaterial.from_database('Polyethylene')
 tape_material = ocd.TapeMaterial.from_database("Kapton")
 prismatic_material = ocd.PrismaticContainerMaterial.from_database("Steel")
+
+solid_electrolyte = ocd.Binder(
+    name="Li6PS5Cl",
+    density=1.9,
+    specific_cost=60.0
+)
+
+solid_electrolyte_separator = ocd.SeparatorMaterial(
+    name="Li6PS5Cl",
+    density=1.9,
+    specific_cost=60.0,
+    porosity=0
+)
+
 # %%
 # Create the cathode
 
@@ -38,26 +47,30 @@ cathode_current_collector=ocd.PunchedCurrentCollector(
     tab_height=30,
     tab_position=70,
     tab_width=80,
-    thickness=10,
-    insulation_width=2
+    thickness=12,
 )
 
 cathode_active_material = ocd.CathodeMaterial.from_database("NMC811")
 
+print(f"{cathode_active_material.irreversible_specific_capacity}")
+
 cathode_formulation = ocd.CathodeFormulation(
-    active_materials={cathode_active_material: 95},
-    binders={binder: 2.5},
-    conductive_additives={conductive_additive: 2.5}
+    active_materials={cathode_active_material: 85},
+    binders={binder: 4.5, solid_electrolyte: 10},
+    conductive_additives={conductive_additive: 0.5}
 )
 
 my_cathode = ocd.Cathode(
     formulation=cathode_formulation,
     current_collector=cathode_current_collector,
     calender_density=3.4,
-    mass_loading=14,
-    insulation_material=insulation,
-    insulation_thickness=3
+    mass_loading=58,
 )
+
+my_cathode.porosity = 0
+
+print(f"{my_cathode.reversible_areal_capacity}")
+print(f"{my_cathode.calender_density}")
 
 # %%
 # Create the anode
@@ -71,30 +84,41 @@ anode_current_collector = ocd.PunchedCurrentCollector(
     tab_height=30,
     tab_position=230,
     tab_width=80,
-    thickness=10
+    thickness=9
 )
 
-anode_active_material = ocd.AnodeMaterial.from_database("Synthetic Graphite")
+import pandas as pd
 
-anode_formulation = ocd.AnodeFormulation(
-    active_materials={anode_active_material: 95},
-    binders={binder: 2.5},
-    conductive_additives={conductive_additive: 2.5}
+spec_cap = [0, 5000, 5000, 0]
+voltage = [0, 0.001, 0.001, 0]
+direction = ['charge', 'charge', 'discharge', 'discharge']
+
+half_cell_curve = pd.DataFrame({
+    'specific_capacity': spec_cap,
+    'voltage': voltage,
+    'direction': direction
+})
+
+lithium_metal_anode_material = ocd.AnodeMaterial(
+    name="Lithium Metal",
+    specific_capacity_curves=half_cell_curve,
+    density=0.534,
+    specific_cost=0,
+    reference="Li/Li+",
+    color="#C9C9C9"
 )
 
 my_anode = ocd.Anode(
-    formulation=anode_formulation,
+    formulation=None,
     current_collector=anode_current_collector,
-    calender_density=1.4,
-    mass_loading=10
 )
 # %% [markdown]
 # %%
 # create the layup
 
 separator = ocd.Separator(
-    material=separator_material,
-    thickness=12,
+    material=solid_electrolyte_separator,
+    thickness=30,
     width=280,
     length=300
 )
@@ -107,8 +131,6 @@ my_layup = ocd.ZFoldMonoLayer(
     separator=separator,
 )
 
-my_layup.np_ratio = 1.1
-
 _plot_exporter.save(
     my_layup.plot_top_down_view(),
     'plot_top_down_view',
@@ -118,8 +140,7 @@ _plot_exporter.save(
 
 my_stack = ocd.ZFoldStack(
     layup=my_layup,
-    n_layers=40,
-    additional_separator_wraps=3
+    n_layers=22,
 )
 
 # looks best in safari
@@ -181,7 +202,7 @@ cell = ocd.PouchCell(
     encapsulation=encapsulation,
     n_electrode_assembly=1,
     clipped_tab_length=10,
-    name=cell_name,
+    name='temp',
     operating_voltage_window=(2.0, 4.1),
 )
 
@@ -194,16 +215,7 @@ _plot_exporter.save(
     cell.plot_top_down_view(),
     'plot_top_down_view',
 )
-# %%
-_plot_exporter.save(
-    cell.plot_mass_breakdown(width=800, height=800),
-    'plot_mass_breakdown',
-)
-# %%
-_plot_exporter.save(
-    cell.plot_cost_breakdown(width=800, height=800),
-    'plot_cost_breakdown',
-)
+
 # %%
 _plot_exporter.save(
     cell.plot_capacity_curve(width=1300, height=800),
@@ -216,29 +228,3 @@ print(f"Energy Density (Wh/L): {cell.volumetric_energy}")
 print(f"Energy (Wh): {cell.energy}")
 print(f"Energy Density (Wh/kg): {cell.specific_energy}")
 print(f"Normalized Cost ($/kWh): {cell.cost_per_energy}")
-# %%
-import pandas as pd
-import datetime as dt
-import re
-from steer_opencell_design import __version__
-
-
-db = DataManager()
-
-db.remove_data(table_name=table_name, condition=f"name = '{cell.name}'")
-
-# insert the cell into the database
-db.insert_data(table_name=table_name, data=pd.DataFrame({
-    'name': [cell.name],
-    'object': [cell.serialize()],
-    'form_factor': [cell.form_factor],
-    'internal_construction': [cell.internal_construction],
-    'date_created': [dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
-    'version': [__version__],
-    'chemistry': [cell.reference_chemistry]
-}))
-
-db.get_data(table_name)
-# %%
-size_mb = len(cell.serialize()) / (1024 ** 2)
-print(f"{size_mb:.2f} MB")
