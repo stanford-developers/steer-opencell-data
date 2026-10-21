@@ -40,6 +40,26 @@ class DataManager:
         columns_str = ", ".join([f"{k} {v}" for k, v in columns.items()])
         self._cursor.execute(f"CREATE TABLE IF NOT EXISTS {table_name} ({columns_str})")
         self._connection.commit()
+        self.ensure_columns(table_name, columns)
+
+    def ensure_columns(self, table_name: str, columns: dict):
+        """
+        Add any of ``columns`` the existing table lacks (``ALTER TABLE ADD COLUMN``).
+
+        Lets a script add a column (e.g. the teardowns' ``metadata`` and ``slug``)
+        to a table created before the column existed; existing rows get NULL.
+
+        :param table_name: Name of the table.
+        :param columns: Dictionary of columns and their types.
+        """
+        self._cursor.execute(f"PRAGMA table_info([{table_name}])")
+        existing = {row[1] for row in self._cursor.fetchall()}
+        for name, column_type in columns.items():
+            if name not in existing:
+                self._cursor.execute(
+                    f"ALTER TABLE [{table_name}] ADD COLUMN {name} {column_type}"
+                )
+        self._connection.commit()
 
     def drop_table(self, table_name: str):
         """

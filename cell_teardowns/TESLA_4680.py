@@ -1,21 +1,42 @@
 # %%
 # ============================================================================
-# TEARDOWN ATTRIBUTION
+# TEARDOWN METADATA
 # ----------------------------------------------------------------------------
-# Source / reference:  Ank, M. et al. (2023), "Lithium-Ion Cells in Automotive
-#                      Applications: Tesla 4680 Cylindrical Cell Teardown and
-#                      Characterization", J. Electrochem. Soc. 170 120536.
-#                      https://iopscience.iop.org/article/10.1149/1945-7111/ad14d0
-# Date of teardown:    Published December 2023
-# Performed by:        Ank et al., Technical University of Munich
-# Notes:               TODO (assumptions, estimated vs. measured values, etc.)
+# Shown in OpenCell's info modal for this cell (/cell-loader/teardowns/<slug>)
+# and uploaded with it. Fields and rules: steer_opencell_data/teardown_metadata.py.
+# An upload keeps what admins have edited in the app unless it is run with
+# --metadata override. Use None for anything not known yet.
 # ============================================================================
+METADATA = {
+    "description": None,
+    "manufacturer": "Tesla",
+    "model": "4680",
+    "year": None,
+    "source_type": "literature",
+    "performed_by": "Ank et al., Technical University of Munich",
+    "teardown_date": "Published December 2023",
+    "citation": (
+        "Ank, M. et al. (2023), \"Lithium-Ion Cells in Automotive "
+        "Applications: Tesla 4680 Cylindrical Cell Teardown and "
+        "Characterization\", J. Electrochem. Soc. 170 120536."
+    ),
+    "notes": None,
+    "links": [
+        {
+            "label": "Paper (J. Electrochem. Soc.)",
+            "url": "https://iopscience.iop.org/article/10.1149/1945-7111/ad14d0",
+            "kind": "paper",
+        },
+    ],
+}
+SLUG = None  # URL slug; None derives it from cell_name
 # %%
 from steer_opencell_data.script_utils import build_plot_exporter
 
 _plot_exporter = build_plot_exporter(__file__)
 # %%
 from steer_opencell_data.DataManager import DataManager
+from steer_opencell_data.teardown_metadata import TEARDOWN_COLUMNS, teardown_columns
 import steer_opencell_design as ocd
 # %%
 # User Inputs
@@ -218,6 +239,7 @@ from steer_opencell_design import __version__
 
 db = DataManager()
 
+db.ensure_columns(table_name, TEARDOWN_COLUMNS)
 db.remove_data(table_name=table_name, condition=f"name = '{cell.name}'")
 
 # insert the cell into the database
@@ -228,7 +250,8 @@ db.insert_data(table_name=table_name, data=pd.DataFrame({
     'internal_construction': [cell.internal_construction],
     'date_created': [dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
     'version': [__version__],
-    'chemistry': [cell.reference_chemistry]
+    'chemistry': [cell.reference_chemistry],
+    **teardown_columns(METADATA, SLUG, cell_name)
 }))
 
 db.get_data(table_name)

@@ -24,7 +24,7 @@ jobs:
       - name: Install package
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
+          pip install -e ".[cli]" pytest
 
       - name: Verify database is a real LFS file, not a pointer
         run: |
@@ -51,3 +51,9 @@ jobs:
               print(f"{table}: {len(names)} records")
               assert len(names) > 0, f"Table '{table}' is empty"
           EOF
+
+      - name: Unit tests
+        run: python -m pytest tests -q
+
+      - name: Teardown metadata in database.db matches the scripts
+        run: python -m steer_opencell_data.cli.sync_metadata --check
