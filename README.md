@@ -49,7 +49,7 @@ print(db.get_table_names())
 | `steer_opencell_data/cli/` | AWS migration CLI |
 | `default_materials/` | Scripts that build the material tables |
 | `cell_references/` | Scripts that build generic reference cell designs |
-| `cell_teardowns/` | Scripts that build teardown-based cell models (see attribution headers in each script) |
+| `cell_teardowns/` | Scripts that build teardown-based cell models; each defines the cell's `METADATA` (see [Teardown metadata](#teardown-metadata)) |
 | `local_data/` | Source half-cell curves and material property CSVs |
 
 ## Rebuilding the Database
@@ -62,6 +62,55 @@ pip install steer-opencell-design
 ```
 
 Each script is a Jupyter-style (`# %%`) script that drops and recreates its table, so run them deliberately — they modify `database.db` in place.
+
+## Teardown metadata
+
+Each teardown script defines a `METADATA` dict and an optional `SLUG` at the top:
+
+```python
+METADATA = {
+    "description": None,          # free text (line breaks kept)
+    "manufacturer": "Tesla",
+    "model": "4680",
+    "year": None,                 # release year, an int
+    "source_type": "literature",  # in_house_teardown | literature | partner | vendor_datasheet | other
+    "performed_by": "Ank et al., Technical University of Munich",
+    "teardown_date": "Published December 2023",
+    "citation": "...",
+    "notes": None,
+    "links": [                    # kind: glimpse | drive | paper | datasheet | other
+        {"label": "Paper", "url": "https://...", "kind": "paper"},
+    ],
+}
+SLUG = None  # URL slug; None derives it from cell_name ("tesla-4680")
+```
+
+OpenCell shows it in the cell's info modal at `/cell-loader/teardowns/<slug>` (the
+link external sites such as Glimpse use), and admins can edit it in the app under Admin
+Actions → Published cells. The rules (field lengths, http(s)-only links, slug format) are
+in `steer_opencell_data/teardown_metadata.py`, mirrored by the data API and the app.
+
+Running a script stores `METADATA`/`SLUG` in the `teardowns` table's `metadata` and `slug`
+columns. To change **only** metadata without rebuilding cells:
+
+```bash
+python -m steer_opencell_data.cli.sync_metadata --dry-run   # show what would change
+python -m steer_opencell_data.cli.sync_metadata             # update database.db
+python -m steer_opencell_data.cli.sync_metadata --check     # CI: fail if out of date
+```
+
+Uploading decides what happens to metadata admins edited in the app:
+
+| Option | Effect |
+| --- | --- |
+| `--metadata keep` (default) | Keep the app's metadata and slug; the repo only seeds teardowns that have none |
+| `--metadata override` | Replace them with the repo's; a changed slug stays as an alias, so old links still work |
+| `--metadata-only` | Update just the teardowns' metadata and slug — no cell objects are uploaded |
+| `--carry-from "<old name>"` | For one teardown renamed in the repo: move the old item's slug, aliases and metadata to the new name |
+
+Writes are conditional, so an admin edit made in the app during an upload is never
+silently lost. `sync_database_to_aws.sh` takes `METADATA_MODE=keep|override` (override asks
+for a typed confirmation).
 
 ## CLI Migration Tool
 
@@ -111,6 +160,9 @@ python -m steer_opencell_data.cli.migrate_record --dry-run
 | `--yes, -y` | Skip confirmation prompt |
 | `--dry-run` | Preview without writing to AWS |
 | `--sqlite-path PATH` | Override database path (default: package's `database.db`) |
+| `--metadata keep\|override` | Teardown metadata: keep the app's edits (default) or override them |
+| `--metadata-only` | Update only teardowns' metadata and slug (no S3 upload) |
+| `--carry-from OLD_NAME` | Move a renamed teardown's slug, aliases and metadata to the new name |
 | `--verbose, -v` | Verbose logging |
 
 ### Environment Variables

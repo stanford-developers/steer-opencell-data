@@ -14,6 +14,16 @@ Batch usage:
     python -m steer_opencell_data.cli.migrate_record --table cathode_materials --name all --yes
     python -m steer_opencell_data.cli.migrate_record --table all --section materials --yes
 
+Teardown metadata (the scripts' METADATA / SLUG; see teardown_metadata.py):
+    --metadata keep       (default) keep what admins edited in the app; the
+                          repo only seeds teardowns that have no metadata/slug
+    --metadata override   replace the app's metadata and slug with the repo's
+                          (a changed slug stays as an alias, so links work)
+    --metadata-only       update just the teardowns' metadata/slug — no cell
+                          objects are uploaded
+    --carry-from "<old>"  a teardown renamed in the repo: move the old item's
+                          slug, aliases and metadata to the new name
+
 Environment variables:
     DYNAMODB_TABLE  Target DynamoDB table (required)
     S3_BUCKET       Target S3 bucket (required)
@@ -26,12 +36,15 @@ from __future__ import annotations
 
 import argparse
 import importlib.resources
+import json
 import logging
 import os
 import sqlite3
 import sys
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Iterator
 
 try:
@@ -43,6 +56,16 @@ except ImportError:
         "Install it with: pip install steer-opencell-data[cli]"
     )
     sys.exit(1)
+
+from steer_opencell_data.teardown_metadata import (
+    METADATA_MODES,
+    TEARDOWN_TABLE,
+    MetadataError,
+    MetadataPlan,
+    merge_metadata,
+    parse_metadata_column,
+    slug_index,
+)
 
 # ---------------------------------------------------------------------------
 # Constants (match lambda/functions/config.py and scripts/migration/migrate.py)
@@ -75,6 +98,9 @@ CELL_METADATA_COLUMNS = [
 ]
 
 _ALL_SENTINEL = "__ALL__"
+
+# Recorded as metadata_updated_by when an upload writes the repo's metadata.
+UPLOAD_EDITOR = "steer-opencell-data upload"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -226,11 +252,128 @@ class AWSWriter:
         s3 = self._get_s3_client()
         s3.delete_object(Bucket=self.s3_bucket, Key=s3_key)
 
-    def put_item(self, item: dict[str, Any]) -> None:
-        """Put item to DynamoDB (upsert)."""
+    def put_item(self, item: dict[str, Any], expect: Expectation | None = None) -> None:
+        """Put item to DynamoDB (upsert), optionally conditional on ``expect``."""
         table = self._get_dynamodb_table()
         clean_item = {k: v for k, v in item.items() if v is not None}
-        table.put_item(Item=clean_item)
+        kwargs = expect.put_kwargs() if expect else {}
+        try:
+            table.put_item(Item=clean_item, **kwargs)
+        except ClientError as exc:
+            _raise_if_condition_failed(exc)
+            raise
+
+    def get_item(self, table_name: str, name: str) -> dict[str, Any] | None:
+        """Read one item (strongly consistent), including soft-deleted ones."""
+        table = self._get_dynamodb_table()
+        response = table.get_item(
+            Key={"table_name": table_name, "name": name}, ConsistentRead=True
+        )
+        return response.get("Item")
+
+    def query_table(self, table_name: str) -> list[dict[str, Any]]:
+        """Every item in one table partition (paginated)."""
+        from boto3.dynamodb.conditions import Key
+
+        table = self._get_dynamodb_table()
+        params: dict[str, Any] = {"KeyConditionExpression": Key("table_name").eq(table_name)}
+        items: list[dict[str, Any]] = []
+        while True:
+            response = table.query(**params)
+            items.extend(response.get("Items", []))
+            if "LastEvaluatedKey" not in response:
+                return items
+            params["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
+    def update_attrs(
+        self,
+        table_name: str,
+        name: str,
+        set_attrs: dict[str, Any],
+        remove_attrs: tuple[str, ...] = (),
+        expect: Expectation | None = None,
+    ) -> None:
+        """UpdateItem: SET/REMOVE attributes on an existing, live item."""
+        table = self._get_dynamodb_table()
+        names: dict[str, str] = {"#n": "name", "#d": "deleted"}
+        values: dict[str, Any] = {":f": False}
+        clauses = []
+        if set_attrs:
+            sets = []
+            for i, (attr, value) in enumerate(set_attrs.items()):
+                names[f"#s{i}"] = attr
+                values[f":s{i}"] = value
+                sets.append(f"#s{i} = :s{i}")
+            clauses.append("SET " + ", ".join(sets))
+        if remove_attrs:
+            removes = []
+            for i, attr in enumerate(remove_attrs):
+                names[f"#r{i}"] = attr
+                removes.append(f"#r{i}")
+            clauses.append("REMOVE " + ", ".join(removes))
+        condition = "attribute_exists(#n) AND (attribute_not_exists(#d) OR #d = :f)"
+        if expect:
+            extra, extra_names, extra_values = expect.condition()
+            if extra:
+                condition = f"{condition} AND {extra}"
+                names.update(extra_names)
+                values.update(extra_values)
+        try:
+            table.update_item(
+                Key={"table_name": table_name, "name": name},
+                UpdateExpression=" ".join(clauses),
+                ConditionExpression=condition,
+                ExpressionAttributeNames=names,
+                ExpressionAttributeValues=values,
+            )
+        except ClientError as exc:
+            _raise_if_condition_failed(exc)
+            raise
+
+
+class ConditionFailed(Exception):
+    """A conditional DynamoDB write found the item changed since it was read."""
+
+
+def _raise_if_condition_failed(exc: ClientError) -> None:
+    if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+        raise ConditionFailed(str(exc)) from exc
+
+
+@dataclass
+class Expectation:
+    """The state a conditional write expects to find (optimistic concurrency).
+
+    ``new``: the item must not exist. Otherwise its ``metadata_updated_at``
+    must still be ``updated_at`` (``None``: still unset) — i.e. no admin has
+    edited the metadata since the upload read it.
+    """
+
+    new: bool = False
+    updated_at: str | None = None
+
+    def condition(self) -> tuple[str, dict[str, str], dict[str, Any]]:
+        if self.new:
+            return "attribute_not_exists(#xn)", {"#xn": "name"}, {}
+        if self.updated_at is None:
+            return "attribute_not_exists(#xu)", {"#xu": "metadata_updated_at"}, {}
+        return "#xu = :xu", {"#xu": "metadata_updated_at"}, {":xu": self.updated_at}
+
+    def put_kwargs(self) -> dict[str, Any]:
+        expression, names, values = self.condition()
+        kwargs: dict[str, Any] = {
+            "ConditionExpression": expression,
+            "ExpressionAttributeNames": names,
+        }
+        if values:
+            kwargs["ExpressionAttributeValues"] = values
+        return kwargs
+
+    @classmethod
+    def of(cls, item: dict[str, Any] | None) -> Expectation:
+        if item is None:
+            return cls(new=True)
+        return cls(updated_at=item.get("metadata_updated_at"))
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +418,101 @@ def build_dynamodb_item(
             item[col] = row[col]
 
     return item
+
+
+def to_dynamo(value: Any) -> Any:
+    """JSON-compatible data → DynamoDB-safe (floats become Decimal)."""
+    return json.loads(json.dumps(value), parse_float=Decimal)
+
+
+def from_dynamo(value: Any) -> Any:
+    """DynamoDB data → plain JSON types (Decimal → int/float), for comparison."""
+    def default(obj: Any) -> Any:
+        if isinstance(obj, Decimal):
+            return int(obj) if obj == obj.to_integral_value() else float(obj)
+        if isinstance(obj, set):
+            return sorted(obj)
+        raise TypeError(type(obj))
+
+    return json.loads(json.dumps(value, default=default))
+
+
+class TeardownMetadataSync:
+    """Decides and tracks the metadata attributes an upload writes.
+
+    Reads the live teardowns once to know which slugs are taken, reads each
+    teardown's current item before writing it, and writes conditionally so
+    an admin edit made in the app in the meantime is never lost (one retry).
+    """
+
+    def __init__(
+        self,
+        writer: AWSWriter,
+        mode: str,
+        carry_from: str | None = None,
+        can_read: bool = True,
+    ):
+        self.writer = writer
+        self.mode = mode
+        self.carry_from = carry_from
+        self.can_read = can_read
+        self._items: dict[str, dict[str, Any]] | None = None
+        self.now = datetime.now(timezone.utc).isoformat()
+
+    def _live_items(self) -> dict[str, dict[str, Any]]:
+        if self._items is None:
+            self._items = {}
+            if self.can_read:
+                for item in self.writer.query_table(TEARDOWN_TABLE):
+                    self._items[item["name"]] = from_dynamo(item)
+        return self._items
+
+    def read(self, name: str) -> dict[str, Any] | None:
+        if not self.can_read:
+            return None
+        item = self.writer.get_item(TEARDOWN_TABLE, name)
+        return from_dynamo(item) if item is not None else None
+
+    def plan(self, row: dict[str, Any]) -> tuple[MetadataPlan, dict[str, Any] | None]:
+        """``(plan, item as read)`` for a SQLite teardown row."""
+        name = row["name"]
+        current = self.read(name)
+        source = current
+        if self.carry_from:
+            source = self.read(self.carry_from)
+            if source is None or source.get("deleted"):
+                raise MetadataError(f"--carry-from: no live teardown '{self.carry_from}'")
+        if source is not None and source.get("deleted"):
+            source = None  # a soft-deleted item's slugs were released
+        exclude = {name} | ({self.carry_from} if self.carry_from else set())
+        plan = merge_metadata(
+            name=name,
+            existing=source,
+            repo_metadata=parse_metadata_column(row.get("metadata")),
+            repo_slug=row.get("slug") or None,
+            mode=self.mode,
+            taken=slug_index(list(self._live_items().values()), exclude=exclude),
+            now=self.now,
+            editor=UPLOAD_EDITOR,
+        )
+        if self.carry_from:
+            plan.summary = f"carried from '{self.carry_from}': {plan.summary}"
+        return plan, current
+
+    def record(self, name: str, attrs: dict[str, Any]) -> None:
+        """Remember a written item so later slugs in the batch avoid it."""
+        items = self._live_items()
+        items[name] = {**items.get(name, {"name": name}), **from_dynamo(attrs)}
+        if self.carry_from and self.carry_from in items:
+            for attr in ("slug", "slug_aliases"):
+                items[self.carry_from].pop(attr, None)
+
+    def release_carried_slugs(self) -> None:
+        """Remove the slug and aliases from the ``--carry-from`` source item."""
+        if self.carry_from:
+            self.writer.update_attrs(
+                TEARDOWN_TABLE, self.carry_from, {}, remove_attrs=("slug", "slug_aliases")
+            )
 
 
 def find_default_database() -> str:
@@ -439,8 +677,23 @@ def migrate_single_record(
     writer: AWSWriter,
     dry_run: bool = False,
     quiet: bool = False,
-) -> None:
-    """Upload a single record to S3 + DynamoDB with cleanup on partial failure."""
+    teardown_sync: TeardownMetadataSync | None = None,
+    metadata_only: bool = False,
+) -> str | None:
+    """Upload a single record to S3 + DynamoDB with cleanup on partial failure.
+
+    For a teardown (with ``teardown_sync``) the metadata attributes are
+    merged per ``--metadata keep|override`` and the write is conditional on
+    the item not having changed since it was read (one retry). With
+    ``metadata_only`` only those attributes are updated and nothing goes to
+    S3. Returns a one-line summary of the metadata decision, if any.
+    """
+    is_teardown = table_name == TEARDOWN_TABLE and teardown_sync is not None
+    if metadata_only:
+        if not is_teardown:
+            raise ValueError("--metadata-only applies to teardowns only")
+        return _sync_metadata_only(row, writer, teardown_sync, dry_run, quiet)
+
     blob = extract_object_blob(row)
     s3_key = generate_s3_key(table_name, row["name"])
 
@@ -449,10 +702,15 @@ def migrate_single_record(
             f"[DRY-RUN] Would upload {len(blob):,} bytes to s3://{s3_key}"
         )
         item = build_dynamodb_item(row, table_name, s3_key)
+        summary = None
+        if is_teardown:
+            plan, _current = teardown_sync.plan(row)
+            item.update(plan.attrs)
+            summary = _report_plan(plan, quiet)
         logger.info(f"[DRY-RUN] Would write DynamoDB item: {item}")
         if not quiet:
             print(f"\n[DRY-RUN] Would migrate {table_name}/{row['name']}")
-        return
+        return summary
 
     # Step 1: Upload to S3
     if not quiet:
@@ -464,9 +722,28 @@ def migrate_single_record(
     # Step 2: Write to DynamoDB (with S3 cleanup on failure)
     if not quiet:
         print(f"Writing to DynamoDB... ", end="", flush=True)
+    summary = None
     try:
-        item = build_dynamodb_item(row, table_name, s3_key)
-        writer.put_item(item)
+        if is_teardown:
+            for attempt in (1, 2):
+                plan, current = teardown_sync.plan(row)
+                item = build_dynamodb_item(row, table_name, s3_key)
+                item.update(to_dynamo(plan.attrs))
+                try:
+                    writer.put_item(item, expect=Expectation.of(current))
+                    break
+                except ConditionFailed:
+                    if attempt == 2:
+                        raise RuntimeError(
+                            "the teardown changed in DynamoDB while uploading "
+                            "(an admin edit?); run the upload again"
+                        )
+            teardown_sync.record(row["name"], plan.attrs)
+            teardown_sync.release_carried_slugs()
+            summary = _report_plan(plan, quiet=True)
+        else:
+            item = build_dynamodb_item(row, table_name, s3_key)
+            writer.put_item(item)
         if not quiet:
             print("done")
     except Exception:
@@ -490,7 +767,55 @@ def migrate_single_record(
             endpoint = f"GET /cells/{table_name}/{row['name']}"
 
         print(f"\nMigrated {table_name}/{row['name']}")
+        if summary:
+            print(f"  Metadata: {summary}")
         print(f"  Verify: {endpoint}")
+    return summary
+
+
+def _report_plan(plan: MetadataPlan, quiet: bool) -> str:
+    for warning in plan.warnings:
+        logger.warning(warning)
+    if not quiet:
+        print(f"  Metadata: {plan.summary}")
+    return plan.summary
+
+
+def _sync_metadata_only(
+    row: dict[str, Any],
+    writer: AWSWriter,
+    teardown_sync: TeardownMetadataSync,
+    dry_run: bool,
+    quiet: bool,
+) -> str:
+    """Update one teardown's metadata attributes only (UpdateItem, no S3)."""
+    name = row["name"]
+    for attempt in (1, 2):
+        plan, current = teardown_sync.plan(row)
+        if current is None or current.get("deleted"):
+            raise ValueError(
+                "not in DynamoDB (or soft-deleted); upload it without --metadata-only"
+            )
+        if dry_run:
+            if not quiet:
+                print(f"\n[DRY-RUN] Would update metadata of {TEARDOWN_TABLE}/{name}")
+            return _report_plan(plan, quiet)
+        try:
+            writer.update_attrs(
+                TEARDOWN_TABLE, name, to_dynamo(plan.attrs), expect=Expectation.of(current)
+            )
+            break
+        except ConditionFailed:
+            if attempt == 2:
+                raise RuntimeError(
+                    "the teardown changed in DynamoDB while updating "
+                    "(an admin edit?); run the upload again"
+                )
+    teardown_sync.record(name, plan.attrs)
+    teardown_sync.release_carried_slugs()
+    if not quiet:
+        print(f"\nUpdated metadata of {TEARDOWN_TABLE}/{name}")
+    return _report_plan(plan, quiet)
 
 
 def preview_batch(
@@ -514,6 +839,8 @@ def migrate_batch(
     rows_by_table: dict[str, list[dict[str, Any]]],
     writer: AWSWriter,
     dry_run: bool = False,
+    teardown_sync: TeardownMetadataSync | None = None,
+    metadata_only: bool = False,
 ) -> list[MigrationResult]:
     """Migrate multiple records across one or more tables.
 
@@ -537,11 +864,13 @@ def migrate_batch(
                 flush=True,
             )
             try:
-                migrate_single_record(
+                summary = migrate_single_record(
                     row, table_name, writer, dry_run=dry_run, quiet=True,
+                    teardown_sync=teardown_sync, metadata_only=metadata_only,
                 )
                 result.migrated += 1
-                print("done" if not dry_run else "dry-run ok")
+                status = "done" if not dry_run else "dry-run ok"
+                print(f"{status} ({summary})" if summary else status)
             except Exception as e:
                 result.errors += 1
                 result.error_details.append((name, str(e)))
@@ -618,6 +947,28 @@ def parse_args() -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Preview without writing to AWS",
+    )
+    parser.add_argument(
+        "--metadata",
+        choices=METADATA_MODES,
+        help=(
+            "Teardown metadata: 'keep' (default) keeps what admins edited in the "
+            "app and only seeds what is missing; 'override' replaces it with the "
+            "repo's. Prompted for when omitted without --yes."
+        ),
+    )
+    parser.add_argument(
+        "--metadata-only",
+        action="store_true",
+        help="Update only the teardowns' metadata and slug (no cell objects uploaded)",
+    )
+    parser.add_argument(
+        "--carry-from",
+        metavar="OLD_NAME",
+        help=(
+            "For one teardown renamed in the repo: move the old item's slug, "
+            "aliases and metadata to the new name (so external links follow it)"
+        ),
     )
     parser.add_argument(
         "--verbose", "-v",
@@ -774,12 +1125,61 @@ def main() -> int:
         # ------------------------------------------------------------------
         # Determine single vs batch mode
         # ------------------------------------------------------------------
+        # ------------------------------------------------------------------
+        # Teardown metadata options
+        # ------------------------------------------------------------------
+        if args.metadata_only:
+            skipped = sorted(t for t in rows_by_table if t != TEARDOWN_TABLE)
+            if skipped:
+                print(f"--metadata-only: skipping {', '.join(skipped)} (teardowns only).")
+            rows_by_table = {
+                t: rows for t, rows in rows_by_table.items() if t == TEARDOWN_TABLE
+            }
+        if args.carry_from:
+            teardown_rows = rows_by_table.get(TEARDOWN_TABLE, [])
+            if len(teardown_rows) != 1 or len(rows_by_table) != 1:
+                print("Error: --carry-from needs exactly one teardown "
+                      "(--table teardowns --name <new name>).")
+                return 1
+            if teardown_rows[0]["name"] == args.carry_from:
+                print("Error: --carry-from names the teardown being uploaded.")
+                return 1
+
         total_records = sum(len(rows) for rows in rows_by_table.values())
         if total_records == 0:
             print("No records to migrate.")
             return 0
 
-        is_batch = total_records > 1
+        teardown_sync = None
+        if TEARDOWN_TABLE in rows_by_table:
+            mode = args.metadata
+            if mode is None and not args.yes:
+                mode = prompt_choice(
+                    "Teardown metadata — what admins edited in the app:",
+                    list(METADATA_MODES),
+                    label_fn=lambda m: (
+                        "Keep it (only seed teardowns that have none)"
+                        if m == "keep"
+                        else "Override it with this repo's METADATA / SLUG"
+                    ),
+                )
+            mode = mode or "keep"
+            can_read = True
+            if args.dry_run:
+                try:
+                    writer.validate_access()
+                except RuntimeError as e:
+                    can_read = False
+                    print(f"Warning: cannot read DynamoDB ({e}); the dry run "
+                          "assumes no teardown exists yet.")
+            teardown_sync = TeardownMetadataSync(
+                writer, mode, carry_from=args.carry_from, can_read=can_read
+            )
+            print(f"\nTeardown metadata mode: {mode}"
+                  + (" (metadata only)" if args.metadata_only else "")
+                  + (f", carried from '{args.carry_from}'" if args.carry_from else ""))
+
+        is_batch = total_records > 1 or args.metadata_only
 
         # ------------------------------------------------------------------
         # Preview
@@ -822,6 +1222,7 @@ def main() -> int:
         if is_batch:
             results = migrate_batch(
                 rows_by_table, writer, dry_run=args.dry_run,
+                teardown_sync=teardown_sync, metadata_only=args.metadata_only,
             )
             print_batch_summary(results)
             total_errors = sum(r.errors for r in results)
@@ -832,6 +1233,7 @@ def main() -> int:
             try:
                 migrate_single_record(
                     row, table_name, writer, dry_run=args.dry_run,
+                    teardown_sync=teardown_sync,
                 )
             except Exception as e:
                 print(f"\nError during migration: {e}")
