@@ -23,3 +23,19 @@
 ## Code formatting
 - Use `black .` to format Python code.
 - Use `isort .` to sort Python imports.
+
+## Code conventions
+
+**The class rules live in `steer-core/CODE_CONVENTIONS.md`. Read that file before you write a class.**
+
+`steer-opencell-design` is the reference implementation. The short form:
+
+1. Write a plain class. Do not use `@dataclass`.
+2. Inherit `ValidationMixin` and `DunderMixin` from `steer_core.Mixins`. Add `DataMixin`, `DateTimeMixin`,
+   and `SerializerMixin` when the class needs them.
+3. Take every unit conversion and every physical constant from `steer_core.Constants`.
+4. Make every public attribute a property. Declare every getter, then every setter.
+5. Validate in the setter, with a `ValidationMixin` method and a capitalised label.
+6. Name every internal field with a leading underscore. Compute a derived value in
+   `_calculate_*_properties()` and give it no setter and no validation.
+7. Store SI units internally. Convert in the getter and the setter.
