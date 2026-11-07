@@ -145,6 +145,11 @@ DRYER_SLOTS = dict(slots=20, dwell_time=2.5)            # coils, 2 h to 3 h in a
 PRETREATMENT_SLOTS = dict(slots=2_000, dwell_time=24.0)  # cells, wetting for one day
 AGING_SLOTS = dict(slots=20_000, dwell_time=336.0)       # cells, two weeks (BatPaC: 1 to 2 weeks)
 FORMATION_SLOTS = dict(slots=1_000, cycles=2, c_rate=0.1, channel_current=10.0, rest_time=2.0)
+
+# The share of the evaporated NMP that the cathode dryer recovers, in %. BatPaC v5
+# (Knehr et al. 2022, Table 9.5) gives 99.5 % for NMP solvent recovery. The anode
+# line uses water and has no recovery unit, so the anode dryer keeps the default 0 %.
+NMP_RECOVERY = 99.5
 # %%
 # machines
 
@@ -161,7 +166,8 @@ MACHINES = [
     ("Dummy anode slitter", "anode_slitting", Slitter, ANODE, values(5, 1.0, 800_000, 25, crew=1)),
     ("Dummy anode puncher", "anode_punching", Puncher, ANODE, values(6, 1.5, 1_500_000, 30, crew=1)),
     ("Dummy cathode coater", "cathode_coating", Coater, CATHODE, values(1.2, 3.5, 6_000_000, 350, crew=3)),
-    ("Dummy cathode dryer", "cathode_drying", Dryer, CATHODE, slotted(**DRYER_SLOTS)),
+    ("Dummy cathode dryer", "cathode_drying", Dryer, CATHODE,
+     {**slotted(**DRYER_SLOTS), "solvent_recovery": NMP_RECOVERY}),
     ("Dummy cathode calenderer", "cathode_calendering", Calenderer, CATHODE, values(4, 0.7, 1_200_000, 40, crew=1)),
     ("Dummy cathode slitter", "cathode_slitting", Slitter, CATHODE, values(5, 1.2, 800_000, 25, crew=1)),
     ("Dummy cathode puncher", "cathode_punching", Puncher, CATHODE, values(6, 2.5, 1_500_000, 30, crew=1)),
