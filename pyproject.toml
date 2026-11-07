@@ -26,13 +26,14 @@ dependencies = [
 [project.optional-dependencies]
 cli = ["boto3>=1.35.0"]
 # Optional extra for the database (re)build scripts in default_materials/,
-# cell_teardowns/ and cell_references/. steer-opencell-design is not on this
-# list as a hard dependency to avoid a circular requirement: install it
-# separately when rebuilding the database.
+# cell_teardowns/, cell_references/ and production_processes/.
+# steer-opencell-design is not on this list as a hard dependency to avoid a
+# circular requirement: install it separately when rebuilding the database.
 build = [
     "pandas",
     "steer-opencell-design",
     "steer-materials",
+    "steer-opencell-production",
 ]
 
 [project.urls]
